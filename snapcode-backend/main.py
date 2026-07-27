@@ -4,6 +4,7 @@ from openai import OpenAI
 import os
 from dotenv import load_dotenv
 import base64
+import httpx
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
@@ -32,23 +33,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip().strip('"').strip("'")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY not set")
 
-# Optional override if you use a proxy / compatible endpoint
-_openai_kwargs = {"api_key": OPENAI_API_KEY}
+# trust_env=False avoids broken HTTP(S)_PROXY vars that can cause "Connection error" on hosts
+_http_client = httpx.Client(timeout=60.0, trust_env=False)
+_openai_kwargs = {
+    "api_key": OPENAI_API_KEY,
+    "http_client": _http_client,
+}
 if os.getenv("OPENAI_BASE_URL"):
     _openai_kwargs["base_url"] = os.getenv("OPENAI_BASE_URL")
 
 client = OpenAI(**_openai_kwargs)
+
+
+def _error_detail(exc: Exception) -> str:
+    parts = [str(exc)]
+    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+    if cause:
+        parts.append(f"cause: {cause}")
+    return " | ".join(parts)
 
 class GenerateRequest(BaseModel):
     description: str
 
 @app.get("/")
 async def root():
-    return {"message": "SnapCode API", "endpoints": ["POST /generate"]}
+    return {"message": "SnapCode API", "endpoints": ["POST /generate", "GET /health"]}
+
+
+@app.get("/health")
+async def health():
+    """Report whether OpenAI is reachable from this host (no secrets returned)."""
+    status = {
+        "ok": False,
+        "openai_key_present": bool(OPENAI_API_KEY),
+        "openai_key_length": len(OPENAI_API_KEY),
+        "openai_base_url": os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1",
+    }
+    try:
+        client.models.list()
+        status["ok"] = True
+        status["openai"] = "reachable"
+    except Exception as e:
+        status["openai"] = "unreachable"
+        status["error"] = _error_detail(e)
+    return status
 
 @app.post("/upload")
 async def upload_image(file: UploadFile = File(...)):
@@ -129,16 +161,15 @@ async def generate_code(request: GenerateRequest):
         }
         
     except Exception as e:
-        print(f"OpenAI API error: {e}")
-        # Return detailed error information
-        error_msg = str(e)
+        error_msg = _error_detail(e)
+        print(f"OpenAI API error: {error_msg}")
         if "insufficient_quota" in error_msg:
             raise HTTPException(status_code=402, detail="API quota exceeded. Please check your OpenAI billing.")
         elif "429" in error_msg:
             raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a moment and try again.")
         elif "model_not_found" in error_msg:
             raise HTTPException(status_code=400, detail="Model not available. Please check your OpenAI account access.")
-        elif "invalid_api_key" in error_msg:
+        elif "invalid_api_key" in error_msg or "Incorrect API key" in error_msg:
             raise HTTPException(status_code=401, detail="Invalid API key. Please check your OpenAI API key.")
         else:
             raise HTTPException(status_code=500, detail=f"OpenAI API error: {error_msg}")

@@ -12,11 +12,13 @@ const Index = () => {
   const [generatedCode, setGeneratedCode] = useState<GeneratedCode | null>(null);
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
   const handleDescriptionSubmit = async (description: string) => {
     setIsProcessing(true);
     setProgress(0);
     setStage("Generating UI...");
+    setErrorMessage("");
     
     try {
       // Simulate progress updates
@@ -52,6 +54,9 @@ const Index = () => {
       setIsProcessing(false);
       setProgress(0);
       setStage("");
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to generate code"
+      );
     }
   };
 
@@ -59,6 +64,7 @@ const Index = () => {
     setGeneratedCode(null);
     setProgress(0);
     setStage("");
+    setErrorMessage("");
   };
 
   return (
@@ -106,6 +112,12 @@ const Index = () => {
         {!isProcessing && !generatedCode && (
           <UploadZone onDescriptionSubmit={handleDescriptionSubmit} isProcessing={isProcessing} />
         )}
+
+          {errorMessage && !isProcessing && (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {errorMessage}
+            </div>
+          )}
           
           {isProcessing && (
             <LoadingState progress={progress} stage={stage} />
