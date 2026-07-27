@@ -10,19 +10,23 @@ load_dotenv()
 
 app = FastAPI()
 
-# Add CORS middleware to allow frontend requests
+# Exact origins (optional FRONTEND_URL for your Netlify site, e.g. https://foo.netlify.app)
+_frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
+_allow_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+]
+if _frontend_url:
+    _allow_origins.append(_frontend_url)
+
+# Starlette does NOT support "https://*.netlify.app" globs in allow_origins —
+# use regex for Netlify / Vercel preview and production hosts.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://127.0.0.1:3000", 
-        "http://localhost:3001", 
-        "http://127.0.0.1:3001",
-        "https://*.vercel.app",  # Vercel preview deployments
-        "https://*.railway.app",  # Railway preview deployments
-        "https://*.netlify.app",  # Netlify preview deployments
-        "https://*.netlify.com"   # Netlify custom domains
-    ],
+    allow_origins=_allow_origins,
+    allow_origin_regex=r"https://.*\.(netlify\.app|netlify\.com|vercel\.app)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,7 +36,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY not set")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Optional override if you use a proxy / compatible endpoint
+_openai_kwargs = {"api_key": OPENAI_API_KEY}
+if os.getenv("OPENAI_BASE_URL"):
+    _openai_kwargs["base_url"] = os.getenv("OPENAI_BASE_URL")
+
+client = OpenAI(**_openai_kwargs)
 
 class GenerateRequest(BaseModel):
     description: str
